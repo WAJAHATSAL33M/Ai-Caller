@@ -1,10 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException
+import hmac
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
+from app.config import settings
 from app.database import get_db
 from app.models import Lead
 from app.schemas import LeadCreate, LeadRead
 
-router = APIRouter(prefix="/leads", tags=["leads"])
+def require_admin(x_admin_key: str | None = Header(default=None)):
+    # The lead API contains sensitive customer information.
+    if not settings.sales_admin_key or not x_admin_key or not hmac.compare_digest(x_admin_key, settings.sales_admin_key):
+        raise HTTPException(status_code=401, detail="Admin access required")
+
+router = APIRouter(prefix="/leads", tags=["leads"], dependencies=[Depends(require_admin)])
 
 @router.post("", response_model=LeadRead, status_code=201)
 def create_lead(payload: LeadCreate, db: Session = Depends(get_db)):
