@@ -30,7 +30,6 @@ The API creates tables at startup for local development. Use Alembic migrations 
 - `GET /health`
 - `POST /leads`
 - `GET /leads`
-- `POST /leads/{lead_id}`
 - `POST /calls/start/{lead_id}`
 
 A lead must have `consent_status="granted"`, a non-empty `consent_source`, and `do_not_call=false` before the call endpoint proceeds. Only set these fields after verifying lawful authorization for the relevant country and channel. An imported phone number is not consent.
