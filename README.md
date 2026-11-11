@@ -52,3 +52,10 @@ The agent must disclose it is an AI assistant, respect requests to stop, avoid u
 Backend: `cd backend && pip install -r requirements.txt && uvicorn app.main:app --reload` (set `DATABASE_URL` and other environment variables first).
 
 Frontend: `cd frontend && npm install && npm run dev`.
+
+
+## Client presentation demo
+
+The React dashboard includes a browser-based sample conversation. Start the frontend with `cd frontend && npm install && npm run dev`, then open the Vite URL shown in the terminal. Select **Live demo** and click **Start demo conversation**. You can edit the sample prospect profile and replay or stop the scripted conversation.
+
+This presentation mode is simulated: it does not dial a phone, use a microphone, contact a prospect, create a CRM record, or book a meeting. It is intended to demonstrate the proposed conversation flow while the production voice integration is completed and tested.
