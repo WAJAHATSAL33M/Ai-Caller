@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API = import.meta.env.VITE_API_URL || "";
 const demoScript = [
   { speaker: "Alex · AI assistant", text: "Hello! This is Alex, an AI assistant calling on behalf of BrightWave Contact Center. Is now an okay time for a quick question?" },
   { speaker: "Prospect · Demo", text: "Sure, I have a minute. What is this about?" },
@@ -20,40 +20,101 @@ export default function App() {
   const [line, setLine] = useState(0);
   const [transcript, setTranscript] = useState([]);
   const [leads, setLeads] = useState([]);
-  const [apiState, setApiState] = useState("checking");
+  const [apiState, setApiState] = useState(API ? "checking" : "offline");
+  const [voiceEnabled, setVoiceEnabled] = useState(true);
+  const [voiceMessage, setVoiceMessage] = useState("");
+  const speechSupported = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
   const [leadName, setLeadName] = useState("Jordan Lee");
   const [company, setCompany] = useState("Northstar Retail");
   const [industry, setIndustry] = useState("Retail");
   const timer = useRef(null);
+  const runId = useRef(0);
+  const speechFailed = useRef(false);
 
   useEffect(() => {
-    fetch(`${API}/leads`)
-      .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
-      .then((data) => { setLeads(data); setApiState("connected"); })
-      .catch(() => setApiState("offline"));
-    return () => clearTimeout(timer.current);
+    if (API) {
+      fetch(`${API}/leads`)
+        .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
+        .then((data) => { setLeads(data); setApiState("connected"); })
+        .catch(() => setApiState("offline"));
+    }
+    return () => {
+      runId.current += 1;
+      clearTimeout(timer.current);
+      if (speechSupported) window.speechSynthesis.cancel();
+    };
   }, []);
 
   function startDemo() {
+    // Start speaking synchronously with the click so browsers allow playback.
+    runId.current += 1;
+    const currentRun = runId.current;
     clearTimeout(timer.current);
+    if (speechSupported) window.speechSynthesis.cancel();
+    speechFailed.current = false;
+    setVoiceMessage("");
     setTranscript([]);
     setLine(0);
     setFinished(false);
     setRunning(true);
-    playLine(0);
+    playLine(0, currentRun);
   }
-  function playLine(index) {
+
+  function playLine(index, currentRun) {
+    if (runId.current !== currentRun) return;
     if (index >= demoScript.length) {
       setRunning(false);
       setFinished(true);
       return;
     }
+
+    const item = demoScript[index];
     setLine(index);
-    setTranscript((items) => [...items, demoScript[index]]);
-    timer.current = setTimeout(() => playLine(index + 1), 2400);
+    setTranscript((items) => [...items, item]);
+
+    const advance = () => {
+      if (runId.current !== currentRun) return;
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => playLine(index + 1, currentRun), 450);
+    };
+
+    if (!voiceEnabled || !speechSupported || speechFailed.current) {
+      timer.current = setTimeout(advance, Math.max(2300, item.text.length * 45));
+      return;
+    }
+
+    try {
+      const synth = window.speechSynthesis;
+      const utterance = new SpeechSynthesisUtterance(item.text);
+      const englishVoices = synth.getVoices().filter((voice) => voice.lang.toLowerCase().startsWith("en"));
+      const isAlex = item.speaker.startsWith("Alex");
+      // Use distinct browser voices where available; otherwise adjust pitch.
+      utterance.voice = englishVoices[isAlex ? 0 : Math.min(1, englishVoices.length - 1)] || null;
+      utterance.lang = utterance.voice?.lang || "en-US";
+      utterance.rate = isAlex ? 0.96 : 1.02;
+      utterance.pitch = isAlex ? 0.92 : 1.12;
+      utterance.volume = 1;
+      utterance.onend = advance;
+      utterance.onerror = (event) => {
+        if (runId.current !== currentRun) return;
+        speechFailed.current = true;
+        setVoiceMessage(`Audio was blocked or unavailable (${event.error || "unknown error"}). The transcript demo will continue. Check browser sound settings and try again.`);
+        advance();
+      };
+      // Safety fallback for browsers that never deliver a speech completion event.
+      timer.current = setTimeout(advance, Math.max(14000, item.text.length * 170));
+      synth.speak(utterance);
+    } catch (error) {
+      speechFailed.current = true;
+      setVoiceMessage("Your browser could not start audio. The transcript demo will continue.");
+      timer.current = setTimeout(advance, Math.max(2300, item.text.length * 45));
+    }
   }
+
   function stopDemo() {
+    runId.current += 1;
     clearTimeout(timer.current);
+    if (speechSupported) window.speechSynthesis.cancel();
     setRunning(false);
     setFinished(false);
   }
@@ -83,9 +144,12 @@ export default function App() {
             <div className="voice-stage">
               <div className={running ? "orb pulse" : "orb"}><span>✦</span></div>
               <h3>{running ? "Alex is speaking…" : finished ? "Demo completed" : "Meet Alex"}</h3>
-              <p>{running ? "Playing a sample sales conversation" : "An AI sales assistant for your contact center"}</p>
+              <p>{running ? "Playing a sample sales conversation with browser-generated speech" : "An AI sales assistant for your contact center"}</p>
               <div className="wave">{Array.from({length:  thirty()}, (_, i) => <i key={i} style={{height: `${10 + ((i * 17) % 27)}px`}} />)}</div>
               <div className="controls">{!running ? <button className="primary" onClick={startDemo}>▶ {finished ? "Replay demo" : "Start demo conversation"}</button> : <button className="stop" onClick={stopDemo}>■ Stop demo</button>}</div>
+              <label className="voice-toggle"><input type="checkbox" checked={voiceEnabled && speechSupported} disabled={running || !speechSupported} onChange={(e) => setVoiceEnabled(e.target.checked)} /> 🔊 Speak conversation aloud</label>
+              {!speechSupported && <p className="voice-notice">This browser does not support speech playback. Use Chrome, Edge, or Safari for the voice demo.</p>}
+              {voiceMessage && <p className="voice-notice" role="status">{voiceMessage}</p>}
             </div>
             <div className="transcript-head"><b>Conversation transcript</b><span>{transcript.length} / {demoScript.length} lines</span></div>
             <div className="transcript">
