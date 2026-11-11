@@ -72,8 +72,10 @@ export default function App() {
     setLine(index);
     setTranscript((items) => [...items, item]);
 
+    let advanced = false;
     const advance = () => {
-      if (runId.current !== currentRun) return;
+      if (advanced || runId.current !== currentRun) return;
+      advanced = true;
       clearTimeout(timer.current);
       timer.current = setTimeout(() => playLine(index + 1, currentRun), 450);
     };
