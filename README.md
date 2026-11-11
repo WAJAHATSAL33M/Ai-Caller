@@ -1,61 +1,97 @@
 # AI Sales Caller
 
-Starter foundation for an AI voice business-development agent that introduces your call-center services, discovers prospect needs, qualifies interest, and routes prospects to a human sales representative.
+A React + Vite frontend and FastAPI backend for an opt-in AI sales-calling starter.
 
-## Project status
+## What works, and what does not yet
 
-**Development starter only — not production-ready or yet validated with a live call.** Includes a FastAPI API, PostgreSQL models, guarded single-lead outbound-call request via OpenAI Live SIP, and a small React lead dashboard.
+- **Browser demo (Vercel):** Text-scripted presentation with speech synthesis. It is **not** a live customer conversation.
+- **Twilio Realtime backend (new):** Source code for **one consented outbound call**, Twilio Media Streams, two-way audio bridged to OpenAI Realtime, a spoken AI disclosure, opt-out suppression and human follow-up requests.
+- **Not yet live-tested:** No Twilio account, phone number, OpenAI API key, persistent backend deployment, or end-to-end customer phone test has been configured in this repository's hosting environment. Do **not** claim this can autonomously close sales today.
+- **No automated contract or payment execution:** The assistant can explain verified offerings and qualify interest. A human confirms pricing, contracts, scheduling and payment through approved systems.
 
-A successful API response means the session request was accepted; it does not prove a person answered or a sales conversation completed. Before live use, implement and test the Live session sideband WebSocket: attach to each session, process ringing/answered/failed/closed events, execute approved tools, persist outcomes, and handle hangup/transfer.
+## Architecture
 
-## Stack
+```text
+Vercel static React dashboard (scripted demo; no API credentials)
+                       |
+                   (separate)
+                       |
+Authorized operator -> FastAPI POST /twilio/call/{lead_id} (X-Admin-Key)
+                       |
+               Twilio Programmable Voice
+                       |
+                 POST /twilio/voice
+                       |
+               <Connect><Stream> WSS
+                       |
+      Persistent FastAPI WebSocket /twilio/media
+                       |
+         OpenAI Realtime API speech-to-speech
+                       |
+  request_human_followup / mark_do_not_call -> PostgreSQL
+```
 
-- Python 3.12, FastAPI, SQLAlchemy 2, PostgreSQL
-- OpenAI Live API over SIP
-- React + Vite dashboard
-- Docker Compose
+The Twilio WebSocket endpoint needs a **persistent, HTTPS/WSS-capable backend host** (for example, Render or Railway). The frontend-only Vercel deployment is not sufficient for live calls. Use a managed database; do not run a disposable local SQLite database in production.
 
-## Quick start
+## 1. Get accounts and verified credentials
 
-1. Copy `.env.example` to `.env` and fill in valid credentials. Never commit `.env`.
-2. Configure a SIP trunk that supports TLS and SRTP and is authorized for your intended destinations.
-3. Run `docker compose up --build`.
-4. API docs: http://localhost:8000/docs
-5. Dashboard: http://localhost:5173
+1. Sign up for [Twilio Programmable Voice](https://www.twilio.com/docs/voice). Purchase/configure a voice-enabled number. Check supported calling destinations, verified caller ID, geo permissions, usage pricing and any trial restrictions **before** attempting international calls.
+2. Create an OpenAI API key with permission, billing and capacity for a supported Realtime model. Review [Realtime WebSockets](https://developers.openai.com/api/docs/guides/realtime-conversations).
+3. Deploy the `backend/` Dockerfile to a **persistent** backend hosting service with public HTTPS/WSS access and PostgreSQL. Use the platform's secret environment-variable settings; never commit credentials.
+4. Set `PUBLIC_BASE_URL=https://your-backend-host` (no trailing slash) and the Twilio credentials from `.env.example`. Set a strong random `SALES_ADMIN_KEY`.
+5. Set `APPROVED_SALES_FACTS` to **verified** service descriptions, allowed claims and approved prices. Empty values disable calls.
+6. Start with `ENABLE_OUTBOUND_CALLS=false`. After confirming legal authorization for every destination, consent records, calling windows, AI disclosure and opt-out process, enable it for a **single test lead** only.
 
-The API creates tables at startup for local development. Use Alembic migrations before production.
+**Critical:** The old `POST /calls/start/{lead_id}` SIP starter has been disabled; it never confirmed an actual conversation. Use the Twilio endpoint below.
 
-## API
+## 2. Local backend
 
-- `GET /health`
-- `POST /leads`
-- `GET /leads`
-- `POST /calls/start/{lead_id}`
+```bash
+cp .env.example .env
+# Set credentials and approved facts directly in .env; do not commit it.
+docker compose up --build
+curl http://localhost:8000/health
+```
 
-A lead must have `consent_status="granted"`, a non-empty `consent_source`, and `do_not_call=false` before the call endpoint proceeds. Only set these fields after verifying lawful authorization for the relevant country and channel. An imported phone number is not consent.
+For a real Twilio call, `PUBLIC_BASE_URL` must point to a publicly reachable HTTPS backend that can also handle WSS; `localhost` isn't sufficient. The development backend reads `DATABASE_URL` and creates starter tables at launch; use Alembic migrations in production.
 
-## Production checklist
+## 3. Add one consented lead and request one call
 
-- Implement and test the OpenAI Live session sideband WebSocket and server-side tool execution.
-- Add idempotency, retries, rate limits, audit logs, monitoring, authentication, and authorization.
-- Add country-specific legal review: consent/lawful basis, do-not-call registries, caller-ID rules, AI disclosure, recording/transcription notices, local calling windows, and data retention/transfer.
-- Add CRM integration, human handoff, appointment-calendar integration, and a tested opt-out/suppression workflow.
-- Add Alembic migrations and automated tests.
-- Verify every service claim, price, case study, and capacity statement before allowing the agent to use it.
+Only set consent to `granted` if you actually have lawful, documented authorization. Imported phone numbers are not consent.
 
-## Safety defaults
+```bash
+# Run these against your backend's HTTPS base URL.
+curl -X POST "https://YOUR_BACKEND/leads" \
+  -H "X-Admin-Key: YOUR_PRIVATE_ADMIN_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"company_name":"Authorized Test Business","contact_name":"Test Customer","phone":"+15551234567","consent_status":"granted","consent_source":"Documented explicit test opt-in"}'
 
-The agent must disclose it is an AI assistant, respect requests to stop, avoid unsupported claims, and never accept payment details or make binding commitments. Do not enable bulk calling until compliance and event-handling controls are reviewed.
+# Use the real lead ID returned above.
+curl -X POST "https://YOUR_BACKEND/twilio/call/1" \
+  -H "X-Admin-Key: YOUR_PRIVATE_ADMIN_KEY"
+```
 
-## Local development without Docker
+**Never place an admin key in React client-side code or Vercel `VITE_*` variables.** Store it only on the trusted server or in a private operator workflow. Do not use the placeholder number above for an actual call.
 
-Backend: `cd backend && pip install -r requirements.txt && uvicorn app.main:app --reload` (set `DATABASE_URL` and other environment variables first).
+The endpoint supports **single-lead calls only**, checks recorded consent and suppression, imposes a 24-hour per-lead cooldown, and is **disabled by default**. A 202 response means Twilio accepted the dialing request; it is not proof of a connected call, sale or appointment. `/twilio/status` updates call status. The media stream is authorized with a short-lived signed token; Twilio HTTP webhooks validate `X-Twilio-Signature`.
 
-Frontend: `cd frontend && npm install && npm run dev`.
+The Realtime agent is instructed to disclose it's AI, use only approved claims, avoid binding promises, respect stop requests and offer human follow-up. A model tool call can update `do_not_call` or `followup_requested` in the database. Voice/model/API compatibility and telephony interruptions need real-world testing before release.
 
+## Frontend demo
 
-## Client presentation demo
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-The React dashboard includes a browser-based sample conversation. Start the frontend with `cd frontend && npm install && npm run dev`, then open the Vite URL shown in the terminal. Select **Live demo** and click **Start demo conversation**. You can edit the sample prospect profile and replay or stop the scripted conversation.
+Open the Vite URL, choose **Live demo** and **Start demo conversation**, with **Speak conversation aloud** enabled for browser-generated voice. This is a prewritten text demonstration, not a live AI call.
 
-This presentation mode is simulated: it does not dial a phone, use a microphone, contact a prospect, create a CRM record, or book a meeting. It is intended to demonstrate the proposed conversation flow while the production voice integration is completed and tested.
+## Safety and production checklist
+
+- Explicitly review country/channel-specific calling rules, registration, consent, call windows and recording/transcription disclosures.
+- Confirm opt-out suppression works in practice and audit all outcomes.
+- Add rate limits, authenticated role-based management, worker monitoring, idempotency and real-time error alerts before any production campaign.
+- Add production database migrations, secure admin UI, tests with a real trial call, sales-team follow-up scheduling and a verified CRM.
+- Do not allow the AI to process cards, enter contracts or invent discounts; use explicit human approval and verified integrations for closing.
+- Monitor call spending and latency. Automatic bulk calling or scheduled autodialing is intentionally **not** implemented.
